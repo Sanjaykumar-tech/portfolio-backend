@@ -1,12 +1,12 @@
 /* =========================================
    SANJAY KUMAR — PORTFOLIO BACKEND
-   Node.js + Express + Nodemailer (CommonJS)
+   Node.js + Express + Resend API
    ========================================= */
 
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend'); // ⚡ Switched to Resend
 const rateLimit = require('express-rate-limit');
 
 const app = express();
@@ -17,6 +17,9 @@ const PORT = process.env.PORT || 5500;
    ========================================= */
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+
+// Render uses a proxy, this is needed for rate limiting to work correctly
+app.set('trust proxy', 1);
 
 // CORS setup
 const allowedOrigins = [
@@ -44,8 +47,8 @@ app.use(cors({
    RATE LIMITING
    ========================================= */
 const contactLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // ⚡ Increased to 20 for testing (normal websites use 5)
   message: {
     success: false,
     error: 'Too many requests. Please try again in 15 minutes.'
@@ -55,23 +58,9 @@ const contactLimiter = rateLimit({
 });
 
 /* =========================================
-   NODEMAILER TRANSPORTER
+   RESEND SETUP
    ========================================= */
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
-
-transporter.verify((error, success) => {
-  if (error) {
-    console.error('❌ Email transporter error:', error.message);
-  } else {
-    console.log('✅ Email transporter ready');
-  }
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 /* =========================================
    HEALTH CHECK
@@ -119,8 +108,9 @@ app.post('/send', contactLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Please provide a valid email address.' });
     }
 
-    if (message.trim().length < 10) {
-      return res.status(400).json({ success: false, error: 'Message must be at least 10 characters.' });
+    // ⚡ Reduced validation to 3 characters
+    if (message.trim().length < 3) {
+      return res.status(400).json({ success: false, error: 'Message must be at least 3 characters.' });
     }
 
     const sanitize = (str) => String(str).replace(/[<>]/g, '').trim();
@@ -129,10 +119,11 @@ app.post('/send', contactLimiter, async (req, res) => {
     const safeSubject = sanitize(subject || 'General Inquiry');
     const safeMessage = sanitize(message);
 
-    const mailToYou = {
-      from: `"Portfolio Contact" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER,
-      replyTo: safeEmail,
+    // 1. Email to YOU (Sanjay)
+    await resend.emails.send({
+      from: 'Portfolio Contact <onboarding@resend.dev>', // Default Resend address
+      to: 'sanjaykumar.techdev@gmail.com', // Your actual email
+      reply_to: safeEmail,
       subject: `📬 New Contact: ${safeSubject}`,
       html: `
         <!DOCTYPE html>
@@ -155,10 +146,11 @@ app.post('/send', contactLimiter, async (req, res) => {
         </body>
         </html>
       `
-    };
+    });
 
-    const mailToSender = {
-      from: `"Sanjay Kumar" <${process.env.EMAIL_USER}>`,
+    // 2. Auto-reply to SENDER
+    await resend.emails.send({
+      from: 'Sanjay Kumar <onboarding@resend.dev>',
       to: safeEmail,
       subject: `✅ Thanks for reaching out, ${safeName}!`,
       html: `
@@ -181,12 +173,7 @@ app.post('/send', contactLimiter, async (req, res) => {
         </body>
         </html>
       `
-    };
-
-    await Promise.all([
-      transporter.sendMail(mailToYou),
-      transporter.sendMail(mailToSender)
-    ]);
+    });
 
     console.log(`✅ Contact from ${safeEmail} (${safeName})`);
 
@@ -197,14 +184,6 @@ app.post('/send', contactLimiter, async (req, res) => {
 
   } catch (error) {
     console.error('❌ /send error:', error);
-
-    if (error.code === 'EAUTH') {
-      return res.status(500).json({
-        success: false,
-        error: 'Email authentication failed. Check server credentials.'
-      });
-    }
-
     return res.status(500).json({
       success: false,
       error: 'Something went wrong. Please try again.'
