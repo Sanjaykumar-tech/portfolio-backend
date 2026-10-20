@@ -60,7 +60,8 @@ const contactLimiter = rateLimit({
 /* =========================================
    RESEND SETUP
    ========================================= */
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resendApiKey = process.env.RESEND_API_KEY || 're_placeholder_key';
+const resend = new Resend(resendApiKey);
 
 /* =========================================
    HEALTH CHECK
@@ -122,7 +123,7 @@ app.post('/send', contactLimiter, async (req, res) => {
     // 1. Email to YOU (Sanjay)
     await resend.emails.send({
       from: 'Portfolio Contact <onboarding@resend.dev>', // Default Resend address
-      to: 'sanjaykumar.techdev@gmail.com', // Your actual email
+      to: 'sanjayotherwork@gmail.com', // Your actual email
       reply_to: safeEmail,
       subject: `📬 New Contact: ${safeSubject}`,
       html: `
